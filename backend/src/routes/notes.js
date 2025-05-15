@@ -7,6 +7,32 @@ const User = require('../models/User');
 
 const router = express.Router();
 
+// Get single note by ID
+router.get('/:id', auth, async (req, res) => {
+  try {
+    const note = await Note.findById(req.params.id)
+      .populate('createdBy', 'name email')
+      .populate('collaborators.userId', 'name email');
+
+    if (!note) {
+      return res.status(404).json({ message: 'Note not found' });
+    }
+
+    // Check if user has permission to view this note
+    const isCreator = note.createdBy._id.equals(req.user._id);
+    const isCollaborator = note.collaborators.some(c => c.userId._id.equals(req.user._id));
+
+    if (!isCreator && !isCollaborator) {
+      return res.status(403).json({ message: 'Not authorized to view this note' });
+    }
+
+    res.json(note);
+  } catch (error) {
+    console.error('Get note error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // Get all notes (with pagination)
 router.get('/', auth, async (req, res) => {
   try {
@@ -113,11 +139,18 @@ router.put('/:id',
       if (title) note.title = title;
       if (content) note.content = content;
       note.lastUpdated = Date.now();
+      note.lastModifiedBy = req.user._id;
 
       await note.save();
+      await note.populate('createdBy', 'name email');
+      await note.populate('collaborators.userId', 'name email');
+      await note.populate('lastModifiedBy', 'name email');
 
       // Emit socket event for real-time updates
-      req.app.get('io').to(note._id.toString()).emit('note_updated', note);
+      req.app.get('io').to(note._id.toString()).emit('note_updated', {
+        ...note.toObject(),
+        updatedByUserId: req.user._id
+      });
 
       res.json(note);
     } catch (error) {

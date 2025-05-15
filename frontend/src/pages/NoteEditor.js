@@ -18,7 +18,7 @@ import {
   Share as ShareIcon,
 } from '@mui/icons-material';
 import { io } from 'socket.io-client';
-import { updateNote, setCurrentNote } from '../store/slices/notesSlice';
+import { updateNote, setCurrentNote, fetchNoteById } from '../store/slices/notesSlice';
 import ShareNoteDialog from '../components/ShareNoteDialog';
 
 const AUTOSAVE_DELAY = 1000;
@@ -35,7 +35,7 @@ const NoteEditor = () => {
   const [notification, setNotification] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [socketError, setSocketError] = useState(false);
-  const { currentNote } = useSelector((state) => state.notes);
+  const { currentNote, loading, error } = useSelector((state) => state.notes);
   const { user } = useSelector((state) => state.auth);
 
   // Initialize socket connection
@@ -76,7 +76,9 @@ const NoteEditor = () => {
       });
 
       socketInstance.on('note_updated', (updatedNote) => {
-        if (updatedNote._id === id && updatedNote.lastUpdated !== currentNote?.lastUpdated) {
+        if (updatedNote._id === id && 
+            updatedNote.lastUpdated !== currentNote?.lastUpdated && 
+            updatedNote.updatedByUserId !== user._id) {
           setLocalNote({
             title: updatedNote.title,
             content: updatedNote.content,
@@ -100,48 +102,35 @@ const NoteEditor = () => {
         socketInstance.disconnect();
       }
     };
-  }, [id, dispatch]);
+  }, [id, dispatch, user._id]);
 
   // Fetch note data
   useEffect(() => {
-    const fetchData = async () => {
+    const loadNote = async () => {
       try {
-        // If we don't have the current note data, fetch it
-        if (!currentNote || currentNote._id !== id) {
-          const response = await fetch(`${process.env.REACT_APP_API_URL}/notes/${id}`, {
-            headers: {
-              Authorization: `Bearer ${localStorage.getItem('token')}`
-            }
-          });
-          
-          if (!response.ok) {
-            throw new Error('Failed to fetch note');
-          }
-          
-          const noteData = await response.json();
-          dispatch(setCurrentNote(noteData));
-        }
-        
-        if (currentNote) {
-          setLocalNote({
-            title: currentNote.title,
-            content: currentNote.content,
-          });
-        }
-        
+        await dispatch(fetchNoteById(id)).unwrap();
         setIsLoading(false);
       } catch (error) {
-        console.error('Error fetching note:', error);
         setNotification({
           type: 'error',
-          message: 'Failed to load note'
+          message: error.message || 'Failed to load note'
         });
         setIsLoading(false);
       }
     };
 
-    fetchData();
-  }, [currentNote, id, dispatch]);
+    loadNote();
+  }, [dispatch, id]);
+
+  // Update local note when currentNote changes
+  useEffect(() => {
+    if (currentNote) {
+      setLocalNote({
+        title: currentNote.title,
+        content: currentNote.content,
+      });
+    }
+  }, [currentNote]);
 
   // Autosave functionality
   const saveChanges = useCallback(() => {

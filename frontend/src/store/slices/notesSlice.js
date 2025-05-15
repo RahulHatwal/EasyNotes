@@ -104,6 +104,18 @@ export const removeCollaborator = createAsyncThunk(
   }
 );
 
+export const fetchNoteById = createAsyncThunk(
+  'notes/fetchNoteById',
+  async (id, { rejectWithValue }) => {
+    try {
+      const response = await axios.get(`${API_URL}/notes/${id}`, setAuthHeader());
+      return response.data;
+    } catch (error) {
+      return rejectWithValue(error.response?.data || { message: 'Failed to fetch note' });
+    }
+  }
+);
+
 const initialState = {
   notes: [],
   currentNote: null,
@@ -241,6 +253,20 @@ const notesSlice = createSlice({
         if (state.currentNote?._id === action.payload._id) {
           state.currentNote = action.payload;
         }
+      })
+      // Fetch note by ID
+      .addCase(fetchNoteById.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+      })
+      .addCase(fetchNoteById.fulfilled, (state, action) => {
+        state.loading = false;
+        state.currentNote = action.payload;
+        state.error = null;
+      })
+      .addCase(fetchNoteById.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload?.message || 'Failed to fetch note';
       });
   },
 });

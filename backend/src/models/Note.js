@@ -16,6 +16,10 @@ const noteSchema = new mongoose.Schema({
     ref: 'User',
     required: true
   },
+  lastModifiedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
   collaborators: [{
     userId: {
       type: mongoose.Schema.Types.ObjectId,
