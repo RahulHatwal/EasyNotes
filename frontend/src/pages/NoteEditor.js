@@ -11,6 +11,7 @@ import {
   Chip,
   Snackbar,
   Alert,
+  CircularProgress,
 } from '@mui/material';
 import {
   ArrowBack as ArrowBackIcon,
@@ -21,6 +22,8 @@ import { updateNote, setCurrentNote } from '../store/slices/notesSlice';
 import ShareNoteDialog from '../components/ShareNoteDialog';
 
 const AUTOSAVE_DELAY = 1000;
+const SOCKET_RECONNECTION_ATTEMPTS = 3;
+const SOCKET_RECONNECTION_DELAY = 2000;
 
 const NoteEditor = () => {
   const { id } = useParams();
@@ -30,53 +33,115 @@ const NoteEditor = () => {
   const [localNote, setLocalNote] = useState({ title: '', content: '' });
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [notification, setNotification] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [socketError, setSocketError] = useState(false);
   const { currentNote } = useSelector((state) => state.notes);
   const { user } = useSelector((state) => state.auth);
 
   // Initialize socket connection
   useEffect(() => {
-    const newSocket = io(process.env.REACT_APP_API_URL || 'http://localhost:5000', {
-      auth: {
-        token: localStorage.getItem('token'),
-      },
-    });
+    let reconnectionAttempts = 0;
+    let socketInstance = null;
 
-    newSocket.on('connect', () => {
-      console.log('Connected to socket server');
-      newSocket.emit('join_note', id);
-    });
+    const connectSocket = () => {
+      socketInstance = io(process.env.REACT_APP_SOCKET_URL || 'http://localhost:5000', {
+        auth: {
+          token: localStorage.getItem('token')
+        },
+        reconnection: true,
+        reconnectionAttempts: SOCKET_RECONNECTION_ATTEMPTS,
+        reconnectionDelay: SOCKET_RECONNECTION_DELAY,
+        transports: ['websocket', 'polling']
+      });
 
-    newSocket.on('note_updated', (updatedNote) => {
-      if (updatedNote._id === id && updatedNote.lastUpdated !== currentNote?.lastUpdated) {
-        setLocalNote({
-          title: updatedNote.title,
-          content: updatedNote.content,
-        });
-        dispatch(setCurrentNote(updatedNote));
-        setNotification({
-          type: 'info',
-          message: `Note updated by ${updatedNote.lastModifiedBy?.name || 'another user'}`,
-        });
-      }
-    });
+      socketInstance.on('connect', () => {
+        console.log('Connected to socket server');
+        setSocketError(false);
+        if (id) {
+          socketInstance.emit('join_note', id);
+        }
+      });
 
-    setSocket(newSocket);
+      socketInstance.on('connect_error', (error) => {
+        console.error('Socket connection error:', error);
+        setSocketError(true);
+        reconnectionAttempts++;
+        
+        if (reconnectionAttempts >= SOCKET_RECONNECTION_ATTEMPTS) {
+          setNotification({
+            type: 'error',
+            message: 'Failed to connect to real-time service'
+          });
+        }
+      });
+
+      socketInstance.on('note_updated', (updatedNote) => {
+        if (updatedNote._id === id && updatedNote.lastUpdated !== currentNote?.lastUpdated) {
+          setLocalNote({
+            title: updatedNote.title,
+            content: updatedNote.content,
+          });
+          dispatch(setCurrentNote(updatedNote));
+          setNotification({
+            type: 'info',
+            message: `Note updated by ${updatedNote.lastModifiedBy?.name || 'another user'}`,
+          });
+        }
+      });
+
+      setSocket(socketInstance);
+    };
+
+    connectSocket();
 
     return () => {
-      newSocket.emit('leave_note', id);
-      newSocket.disconnect();
+      if (socketInstance) {
+        socketInstance.emit('leave_note', id);
+        socketInstance.disconnect();
+      }
     };
-  }, [id, dispatch, currentNote?.lastUpdated]);
+  }, [id, dispatch]);
 
   // Fetch note data
   useEffect(() => {
-    if (currentNote?._id === id) {
-      setLocalNote({
-        title: currentNote.title,
-        content: currentNote.content,
-      });
-    }
-  }, [currentNote, id]);
+    const fetchData = async () => {
+      try {
+        // If we don't have the current note data, fetch it
+        if (!currentNote || currentNote._id !== id) {
+          const response = await fetch(`${process.env.REACT_APP_API_URL}/notes/${id}`, {
+            headers: {
+              Authorization: `Bearer ${localStorage.getItem('token')}`
+            }
+          });
+          
+          if (!response.ok) {
+            throw new Error('Failed to fetch note');
+          }
+          
+          const noteData = await response.json();
+          dispatch(setCurrentNote(noteData));
+        }
+        
+        if (currentNote) {
+          setLocalNote({
+            title: currentNote.title,
+            content: currentNote.content,
+          });
+        }
+        
+        setIsLoading(false);
+      } catch (error) {
+        console.error('Error fetching note:', error);
+        setNotification({
+          type: 'error',
+          message: 'Failed to load note'
+        });
+        setIsLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [currentNote, id, dispatch]);
 
   // Autosave functionality
   const saveChanges = useCallback(() => {
@@ -104,10 +169,18 @@ const NoteEditor = () => {
   const canEdit = currentNote?.createdBy._id === user._id ||
     currentNote?.collaborators.some(c => c.userId._id === user._id && c.permission === 'write');
 
+  if (isLoading) {
+    return (
+      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '80vh' }}>
+        <CircularProgress />
+      </Box>
+    );
+  }
+
   if (!currentNote) {
     return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-        Loading...
+      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '80vh' }}>
+        <Typography variant="h6" color="text.secondary">Note not found</Typography>
       </Box>
     );
   }

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
+import { io } from 'socket.io-client';
 import {
   Box,
   Grid,
@@ -19,6 +20,8 @@ import {
   Tab,
   IconButton,
   Tooltip,
+  Snackbar,
+  Alert,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -26,7 +29,7 @@ import {
   Delete as DeleteIcon,
   Share as ShareIcon,
 } from '@mui/icons-material';
-import { fetchNotes, createNote, deleteNote } from '../store/slices/notesSlice';
+import { fetchNotes, createNote, deleteNote, removeNoteInRealtime } from '../store/slices/notesSlice';
 import ShareNoteDialog from '../components/ShareNoteDialog';
 
 const Dashboard = () => {
@@ -36,10 +39,32 @@ const Dashboard = () => {
   const [newNote, setNewNote] = useState({ title: '', content: '' });
   const [currentTab, setCurrentTab] = useState(0);
   const [page, setPage] = useState(1);
+  const [notification, setNotification] = useState(null);
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const { notes, totalPages, loading } = useSelector((state) => state.notes);
   const { user } = useSelector((state) => state.auth);
+
+  // Initialize socket connection
+  useEffect(() => {
+    const socket = io(process.env.REACT_APP_API_URL || 'http://localhost:5000', {
+      auth: {
+        token: localStorage.getItem('token'),
+      },
+    });
+
+    socket.on('note_deleted', (deletedNoteId) => {
+      dispatch(removeNoteInRealtime(deletedNoteId));
+      setNotification({
+        type: 'info',
+        message: 'Note was deleted',
+      });
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, [dispatch]);
 
   useEffect(() => {
     dispatch(fetchNotes({ page }));
@@ -52,9 +77,20 @@ const Dashboard = () => {
     });
   };
 
-  const handleDeleteNote = (noteId) => {
+  const handleDeleteNote = async (noteId) => {
     if (window.confirm('Are you sure you want to delete this note?')) {
-      dispatch(deleteNote(noteId));
+      try {
+        await dispatch(deleteNote(noteId)).unwrap();
+        setNotification({
+          type: 'success',
+          message: 'Note deleted successfully',
+        });
+      } catch (error) {
+        setNotification({
+          type: 'error',
+          message: error.message || 'Failed to delete note',
+        });
+      }
     }
   };
 
@@ -227,6 +263,23 @@ const Dashboard = () => {
           note={selectedNote}
         />
       )}
+
+      <Snackbar
+        open={!!notification}
+        autoHideDuration={3000}
+        onClose={() => setNotification(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+      >
+        {notification && (
+          <Alert
+            onClose={() => setNotification(null)}
+            severity={notification.type}
+            sx={{ width: '100%' }}
+          >
+            {notification.message}
+          </Alert>
+        )}
+      </Snackbar>
     </Box>
   );
 };

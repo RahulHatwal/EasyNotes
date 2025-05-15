@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
+const jwt = require('jsonwebtoken');
 
 // Import routes
 const authRoutes = require('./routes/auth');
@@ -11,13 +12,55 @@ const noteRoutes = require('./routes/notes');
 
 const app = express();
 const httpServer = createServer(app);
+
+// Socket.IO setup with authentication
 const io = new Server(httpServer, {
   cors: {
     origin: process.env.ALLOWED_ORIGINS || 'http://localhost:3000',
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
     credentials: true
+  },
+  pingTimeout: 60000,
+  cookie: false
+});
+
+// Socket authentication middleware
+io.use((socket, next) => {
+  try {
+    const token = socket.handshake.auth.token;
+    if (!token) {
+      return next(new Error('Authentication error'));
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    socket.userId = decoded.userId;
+    next();
+  } catch (error) {
+    next(new Error('Authentication error'));
   }
 });
+
+// Socket connection handling
+io.on('connection', (socket) => {
+  console.log('Client connected:', socket.id);
+
+  socket.on('join_note', (noteId) => {
+    socket.join(noteId);
+    console.log(`User ${socket.userId} joined note: ${noteId}`);
+  });
+
+  socket.on('leave_note', (noteId) => {
+    socket.leave(noteId);
+    console.log(`User ${socket.userId} left note: ${noteId}`);
+  });
+
+  socket.on('disconnect', () => {
+    console.log('Client disconnected:', socket.id);
+  });
+});
+
+// Make io accessible to routes
+app.set('io', io);
 
 // Middleware
 app.use(cors({
@@ -25,25 +68,6 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.json());
-
-// Socket.io connection handling
-io.on('connection', (socket) => {
-  console.log('Client connected:', socket.id);
-
-  socket.on('join_note', (noteId) => {
-    socket.join(noteId);
-    console.log(`User ${socket.id} joined note: ${noteId}`);
-  });
-
-  socket.on('leave_note', (noteId) => {
-    socket.leave(noteId);
-    console.log(`User ${socket.id} left note: ${noteId}`);
-  });
-
-  socket.on('disconnect', () => {
-    console.log('Client disconnected:', socket.id);
-  });
-});
 
 // Routes
 app.use('/api/auth', authRoutes);

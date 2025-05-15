@@ -140,7 +140,7 @@ router.delete('/:id', auth, async (req, res) => {
       return res.status(403).json({ message: 'Not authorized to delete this note' });
     }
 
-    await note.remove();
+    await Note.findByIdAndDelete(req.params.id);
 
     // Emit socket event for real-time updates
     req.app.get('io').to(note._id.toString()).emit('note_deleted', note._id);

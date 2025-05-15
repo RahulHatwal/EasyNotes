@@ -203,6 +203,7 @@ const notesSlice = createSlice({
         if (state.currentNote?._id === action.payload) {
           state.currentNote = null;
         }
+        state.error = null;
       })
       .addCase(deleteNote.rejected, (state, action) => {
         state.loading = false;
